@@ -32,6 +32,11 @@ class Keyziio
     @logged_in = true
   end
 
+  def inject_user_key (user_private_key_pem, key_id)
+    # Injects the user's private_key and key_id so that they can unwrap Keyziio data keys.
+    @kzcrypt.inject_user_key(user_private_key_pem, key_id)
+  end
+
   def encrypt_file (in_file, out_file, key_id)
     #'encrypt: Encrypts input_file with key_id to output_file.'
     raise UnAuthenticatedUser if not @logged_in
@@ -49,9 +54,10 @@ class Keyziio
   end
 end
 
-if __FILE__ == $0
-  shell = Keyziio.new()
-  shell.login_user('billy')
-  shell.encrypt_file('README.md', 'readme_rb.enc', 'ruby_test_key1')
-  #shell.decrypt_file('readme_rb.enc', 'readme.dec')
-end
+#if __FILE__ == $0
+#  # For debugging
+#  shell = Keyziio.new()
+#  shell.login_user('billy')
+#  shell.encrypt_file('README.md', 'readme_rb.enc', 'ruby_test_key1')
+#  #shell.decrypt_file('readme_rb.enc', 'readme.dec')
+#end
