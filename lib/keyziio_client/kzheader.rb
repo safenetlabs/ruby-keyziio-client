@@ -24,7 +24,7 @@ class KZHeader
   # Length: Length of the header data(the rest of the header)
   # Header Data: Variable length string containing json encoded header data.  It currently just includes a 'key_id'
   #              key/value pair.
-  attr_accessor :key_id
+  attr_accessor :key_id, :mac, :magic_number
 
   def initialize
     @header = []
@@ -33,6 +33,7 @@ class KZHeader
     @header_version = 1
     @fixed_header_section_length = 128 + 32 + 4 + 4 # pre
     @key_id = nil
+    @mac = nil
   end
 
   def encode
@@ -41,7 +42,10 @@ class KZHeader
     @header[2] = @header_version
 
     # content section
-    @header[4] = "{\"key_id\": \"#{@key_id}\"}"
+    header_dict = Hash.new
+    header_dict['key_id'] = "#{@key_id}"
+    header_dict['mac'] = "#{@mac}" if @mac
+    @header[4] = header_dict.to_json #"{\"key_id\": \"#{@key_id}\"}"
     @header[3] = @header[4].bytesize
 
     return @header.pack("A128A32L<L<A#{@header[3]}")
@@ -80,7 +84,10 @@ class KZHeader
   def _decode_header_content_section (header_content)
     # decodes the header content from offset of header_content
     # header-data
-    @key_id = JSON.parse(header_content)['key_id']
+    #@key_id = JSON.parse(header_content)['key_id']
+    header_dict = JSON.parse(header_content)
+    @key_id = header_dict['key_id']
+    @mac = header_dict['mac']
   end
 
   def decode_from_file (file_name)
@@ -97,22 +104,22 @@ class KZHeader
   end
 end
 
-if __FILE__ == $0
-  # just for debugging...
-  h1 = KZHeader.new()
-  h1.key_id = 'mah key John Snow'
-  encoded_h1 = h1.encode()
-
-  h2 = KZHeader.new()
-  h2.decode(encoded_h1)
-
-  if(h1.key_id == h2.key_id)
-      print "they match\n"
-  else
-      print "no match\n"
-  end
-
-#  h3 = KZHeader.new()
-#  h3.decode_from_file('readme.enc')
-#  print "Found key id:  #{h3.key_id}\n"
-end
+#if __FILE__ == $0
+#  # just for debugging...
+#  h1 = KZHeader.new()
+#  h1.key_id = 'mah key John Snow'
+#  encoded_h1 = h1.encode()
+#
+#  h2 = KZHeader.new()
+#  h2.decode(encoded_h1)
+#
+#  if(h1.key_id == h2.key_id)
+#      print "they match\n"
+#  else
+#      print "no match\n"
+#  end
+#
+##  h3 = KZHeader.new()
+##  h3.decode_from_file('readme.enc')
+##  print "Found key id:  #{h3.key_id}\n"
+#end

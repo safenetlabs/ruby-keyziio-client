@@ -16,9 +16,11 @@ class KZCrypt
 
   def initialize
     @chunk_length = 1024
-    @rest_client = KZRestClient.new()
+    @rest_client = KZRestClient.new
     @cipher_algo = 'AES-256-CBC'
     @cipher_block_size = 16
+    @header = KZHeader.new
+    @mac = nil
   end
 
   def inject_user_key (user_private_key_pem, user_id)
@@ -31,23 +33,29 @@ class KZCrypt
   def _process_file (file_in, file_out, encrypt, key_id=nil)
     if not encrypt
       # get the key id from the file itself
-      header = KZHeader.new()
-      header_length = header.decode_from_file(file_in)
-      key_id = header.key_id
+      header_length = @header.decode_from_file(file_in)
+      key_id = @header.key_id
     end
-    cipher = _init_cipher(key_id, encrypt)
+
+    # Setup decrypt key and mac
+    new_key = encrypt
+    cipher = _init_cipher(key_id, new_key)
 
     plain_text_length = File.stat(file_in).size
     File.open(file_in, 'rb') do |f_in|
       if not encrypt
+        # Check the mac
+        if @mac != @header.mac
+          raise InvalidKeyException
+        end
         f_in.seek(header_length)
       end
       File.open(file_out, 'wb') do |f_out|
         if encrypt
           # create a header
-          header = KZHeader.new()
-          header.key_id = key_id
-          f_out.write(header.encode())
+          @header.key_id = key_id
+          @header.mac = @mac
+          f_out.write(@header.encode())
         end
         bytes_remaining = plain_text_length
         while bytes_remaining > 0
@@ -100,17 +108,25 @@ class KZCrypt
     return !is_last_chunk ? data_out : data_out[0..-(data_out[-1]).ord]
   end
 
-  def _init_cipher (key_id, encrypt)
-    key_json = @rest_client.get_key(key_id, @user_id)
+  def _init_cipher (key_id, new_key)
+    if new_key
+      key_json = @rest_client.get_new_key(key_id, @user_id)
+    else
+      key_json = @rest_client.get_key(key_id, @user_id)
+    end
     # Key is encrypted under the user key, we have to decrypt it
     wrapped_key = Base64.decode64(JSON.parse(key_json)['key'])
     begin
       raw_key = @user_private_key.private_decrypt(wrapped_key, OpenSSL::PKey::RSA::PKCS1_PADDING)
-    rescue
+    rescue OpenSSL::PKey::RSAError
+      raise InvalidKeyException
     end
+
+    @mac = _make_mac (raw_key)
 
     iv = Base64.decode64(JSON.parse(key_json)['iv'])
     cipher = OpenSSL::Cipher.new(@cipher_algo)
+    encrypt = new_key
     if encrypt
       cipher.encrypt
     else
@@ -121,5 +137,11 @@ class KZCrypt
     # We take care of padding
     cipher.padding = 0
     return cipher
+  end
+
+  def _make_mac (raw_key)
+    #  Returns a MAC of the keyziio header magic number
+    digest = OpenSSL::Digest.new('sha256')
+    return OpenSSL::HMAC.hexdigest(digest, raw_key, @header.magic_number)
   end
 end

@@ -33,6 +33,10 @@ class KZRestClient < Object
       @user_key_path = 'api/v1/data_keys/'
       @sessions_path = 'sessions.json'
       @users_path = 'users.json'
+      @common_header = Hash.new
+      @common_header['content_type'] = 'json'
+      @common_header['accept'] = 'json'
+      @common_header['user_agent'] = 'json'
     end
 
     def rest_exception_handler (code)
@@ -59,39 +63,55 @@ class KZRestClient < Object
 
     def get_key (key_id, user_id)
       begin
-        response = RestClient.get(_url(@user_key_path + key_id.to_s), {:params => {'user_id' => user_id},
+        response = RestClient.get _url(@user_key_path + key_id.to_s), {:params => {'user_id' => user_id},
                                                                        :content_type => :json,
                                                                        :accept => :json,
-                                                                       :user_agent => 'Keyziio Ruby Client'})
+                                                                       :user_agent => 'Keyziio Ruby Client'}
       rescue Errno::ECONNREFUSED
         raise ConnectionFailure
-      rescue RestClient::Exception
-        rest_exception_handler(response.code)
+      rescue StandardError => e
+        e.response
+        raise
       end
       return response
     end
-    
-    def put (path, data=nil)
-      #response = RestClient.put(_url(path), {:content_type => :json,
-      #                                       :accept => :json,
-      #                                       :user_agent => 'Keyziio Ruby Client'})
+
+    def get_new_key (key_id, user_id)
       begin
-        response = RestClient.put(_url(path), common_headers)
+        response = RestClient.post _url(@user_key_path), {'user_id' => user_id, 'name' => key_id}.to_json,
+                                                         :content_type => :json,
+                                                         :accept => :json,
+                                                         :user_agent => 'Keyziio Ruby Client'
       rescue Errno::ECONNREFUSED
         raise ConnectionFailure
-      rescue RestClient::Exception
-        rest_exception_handler(response.code)
+      rescue => e
+        e.response
+        raise
+      end
+
+      return response
+    end
+
+    def put (path, data=nil)
+      begin
+        response = RestClient.put _url(path), common_headers
+      rescue Errno::ECONNREFUSED
+        raise ConnectionFailure
+      rescue => e
+        e.response
+        raise
       end
       return response
     end
     
     def get (path)
       begin
-        response = RestClient.get(_url(path), common_headers)
+        response = RestClient.get _url(path), common_headers
       rescue Errno::ECONNREFUSED
         raise ConnectionFailure
-      rescue RestClient::Exception
-        rest_exception_handler(response.code)
+      rescue => e
+        e.response
+        raise
       end
       return response
     end
@@ -99,22 +119,24 @@ class KZRestClient < Object
 
     def post (path, data=nil)
       begin
-        response = RestClient.post(_url(path), common_headers)
+        response = RestClient.post _url(path), common_headers
       rescue Errno::ECONNREFUSED
         raise ConnectionFailure
-      rescue RestClient::Exception
-        rest_exception_handler(response.code)
+      rescue => e
+        e.response
+        raise
       end
       return response
     end
     
     def delete (path)
       begin
-        response = RestClient.delete(_url(path), common_headers)
+        response = RestClient.delete _url(path), common_headers
       rescue Errno::ECONNREFUSED
         raise ConnectionFailure
-      rescue RestClient::Exception
-        rest_exception_handler(response.code)
+      rescue => e
+        e.response
+        raise
       end
       return response
     end

@@ -41,6 +41,6 @@ end
 if __FILE__ == $0
   shell = KzTest.new()
   shell.do_login('billy')
-  shell.do_encrypt('README.md', 'readme_rb.enc', 'ruby_test_key1')
-  shell.do_decrypt('readme_rb.enc', 'readme.dec')
+  shell.do_encrypt('README.md', 'readme.enc', 'ruby_test_key1')
+  #shell.do_decrypt('readme.enc', 'readme.dec')
 end
