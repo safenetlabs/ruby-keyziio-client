@@ -15,7 +15,7 @@ class KzTest
     @asp_rest_client = KZRestClient.new()
     @asp_rest_client.server_port = 3000
     @asp_rest_client.server_url = 'localhost'
-    @keyziio = Keyziio.new()
+    @keyziio = KZClient.new()
   end
 
   def do_login (username)
@@ -59,11 +59,35 @@ class KzTest
     @keyziio.decrypt_file(in_file, out_file)
     print "done\n"
   end
+
+  def do_encrypt_buffer (*args)
+    #'encrypt: Encrypts input_file with key_id to output_file: Usage: encrypt <input_file> <output_file> <key_id>'
+    raise ArgumentError, 'Invalid arguments.  Usage: encrypt <input_file> <output_file> <key_id>' if args.length != 2
+    raise UnAuthenticatedUser if not @logged_in
+    in_file, key_id = *args
+    print "encrypting #{in_file} with key:#{key_id}...\n"
+    @keyziio.encrypt_buffer(in_file, key_id)
+    #print "done\n"
+  end
+
+  def do_decrypt_buffer (*args)
+    # 'decrypt: Decrypts input file to output file.  Gets the key_id from the file header.  Usage: decrypt <input_file> <output_file>'
+    raise ArgumentError, 'Invalid arguments.  Usage: decrypt <input_file> <output_file>' if args.length != 1
+    raise UnAuthenticatedUser if not @logged_in
+    in_file = *args
+    print "decrypting #{in_file}...\n"
+    @keyziio.decrypt_buffer(in_file)
+    #print "done\n"
+  end
+
 end
 
 if __FILE__ == $0
   shell = KzTest.new()
-  shell.do_login('billy')
-  shell.do_encrypt('README.md', 'readme.enc', 'ruby_test_key1')
-  shell.do_decrypt('readme.enc', 'readme.dec')
+  shell.do_login('u3')
+  #shell.do_encrypt('README.md', 'readme.enc', 'ruby_test_key1')
+  #shell.do_decrypt('readme.enc', 'readme.dec')
+  enc_buf = shell.do_encrypt_buffer('This is the first post', 'test_key1')
+  dec_buf = shell.do_decrypt_buffer(enc_buf)
+  print dec_buf
 end

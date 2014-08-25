@@ -1,6 +1,7 @@
 #require_relative 'version.rb'
 
 require 'json'
+require 'stringio'
 
 class KeyziioDecodeException < Exception
   # File is either not an encrypted keyziio file or does not have a valid header
@@ -90,16 +91,18 @@ class KZHeader
     @mac = header_dict['mac']
   end
 
-  def decode_from_file (file_name)
+  def decode_header (io_object, is_file = false)
     # Decodes the header from a file.  If the file.equal? not a keyzio file we will throw a KeyzioDecodeException
     # Returns the length of the entire header (i.e. the offset for the real encrypted data
-    header_content_length = 0
-    File.open(file_name, 'rb') do |f|
-        fixed_header_section = f.read(@fixed_header_section_length)
-        header_content_length = _decode_fixed_header_section(fixed_header_section)
-        header_content_section = f.read(header_content_length)
-        _decode_header_content_section(header_content_section)
+    if is_file
+      fd = File.open(io_object, 'rb')
+    else
+      fd = StringIO.new(io_object)
     end
+    fixed_header_section = fd.read(@fixed_header_section_length)
+    header_content_length = _decode_fixed_header_section(fixed_header_section)
+    header_content_section = fd.read(header_content_length)
+    _decode_header_content_section(header_content_section)
     return @fixed_header_section_length + header_content_length
   end
 end

@@ -1,6 +1,7 @@
 #require_relative 'version.rb'
 require 'base64'
 require 'openssl'
+require 'stringio'
 require_relative 'kzrestclient.rb'
 require_relative 'kzheader.rb'
 
@@ -23,17 +24,10 @@ class KZCrypt
     @mac = nil
   end
 
-  def inject_user_key (user_private_key_pem, user_id)
-    # Injects the users private key and id so that they can unwrap keyziio data keys
-    # The private key is expected to be in PEM format
-    @user_private_key = OpenSSL::PKey::RSA.new user_private_key_pem
-    @user_id = user_id
-  end
-
   def _process_file (file_in, file_out, encrypt, key_id=nil)
     if not encrypt
       # get the key id from the file itself
-      header_length = @header.decode_from_file(file_in)
+      header_length = @header.decode_header(file_in, true)
       key_id = @header.key_id
     end
 
@@ -72,14 +66,61 @@ class KZCrypt
     end
   end
 
-  def encrypt_file (file_in, file_out, key_id)
-    # Encrypts file_in using key_id.  It will create the key if it has to.
-    _process_file(file_in, file_out, true, key_id)
-  end
+  def _process_buffer (obj_in, encrypt, key_id=nil)
+    if not encrypt
+      # get the key id from the file itself
+      header_length = @header.decode_header(obj_in, false)
+      key_id = @header.key_id
+    end
 
-  def decrypt_file (file_in, file_out)
-    # Decrypts file_in using key_id.  It will create the key if it has to.
-    _process_file(file_in, file_out, false)
+    # Setup decrypt key and mac
+    new_key = encrypt
+    cipher = _init_cipher(key_id, new_key)
+
+    obj_out = ''
+    #plain_text_length = encrypt ? obj_in.bytesize : obj_in[0].bytesize
+    plain_text_length = obj_in.bytesize
+
+    if not encrypt
+      # Check the mac
+      if @mac != @header.mac
+        raise InvalidKeyException
+      end
+      dec_buf = Base64.decode64(obj_in[header_length .. plain_text_length])
+    end
+
+    if encrypt
+      # create a header
+      @header.key_id = key_id
+      @header.mac = @mac
+      obj_out = @header.encode()
+      bytes_remaining = plain_text_length
+    else
+      bytes_remaining = dec_buf.bytesize
+    end
+
+    offset = 0
+    enc_out = ''
+    while bytes_remaining > 0
+      bytes_to_read = bytes_remaining < @chunk_length ? bytes_remaining : @chunk_length
+      if not encrypt
+        data_in = dec_buf[offset .. bytes_to_read]
+      else
+        data_in = obj_in[offset .. bytes_to_read]
+      end
+      offset = offset + bytes_to_read
+
+      bytes_remaining -= bytes_to_read
+      if encrypt
+        enc_out << _encrypt_chunk(cipher, data_in, bytes_remaining <= 0 )
+      else
+        obj_out << _decrypt_chunk(cipher, data_in, bytes_remaining <= 0 )
+      end
+    end
+    if encrypt
+      obj_out << Base64.encode64(enc_out)
+    end
+    obj_out
   end
 
   def _encrypt_chunk (cipher, data_in, is_last_chunk)
@@ -144,4 +185,32 @@ class KZCrypt
     digest = OpenSSL::Digest.new('sha256')
     return OpenSSL::HMAC.hexdigest(digest, raw_key, @header.magic_number)
   end
+
+  def inject_user_key (user_private_key_pem, user_id)
+    # Injects the users private key and id so that they can unwrap keyziio data keys
+    # The private key is expected to be in PEM format
+    @user_private_key = OpenSSL::PKey::RSA.new user_private_key_pem
+    @user_id = user_id
+  end
+
+  def encrypt_file (file_in, file_out, key_id)
+    # Encrypts file_in using key_id.  It will create the key if it has to.
+    _process_file(file_in, file_out, true, key_id)
+  end
+
+  def decrypt_file (file_in, file_out)
+    # Decrypts file_in using key_id.  It will create the key if it has to.
+    _process_file(file_in, file_out, false)
+  end
+
+  def encrypt_buffer (buf_in, key_id)
+    # Encrypts buf_in using key_id.  It will create the key if it has to.
+    _process_buffer(buf_in, true, key_id)
+  end
+
+  def decrypt_buffer (buf_in)
+    # Decrypts buf_in using key_id.  It will create the key if it has to.
+    _process_buffer(buf_in, false)
+  end
+
 end

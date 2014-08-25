@@ -2,7 +2,7 @@ require 'keyziio_client/version.rb'
 require 'keyziio_client/kzrestclient.rb'
 require 'keyziio_client/kzcrypt.rb'
 
-class Keyziio
+class KZClient
   def initialize
     @kzcrypt = KZCrypt.new()
   end
@@ -19,9 +19,17 @@ class Keyziio
 
   def decrypt_file (in_file, out_file)
     # 'decrypt: Decrypts input file to output file.  Gets the key_id from the file header.'
-
     @kzcrypt.decrypt_file(in_file, out_file)
   end
 
+  def encrypt_buffer (buf_in, key_id)
+    # Encrypts buf_in using key_id.  It will create the key if it has to.
+    @kzcrypt.encrypt_buffer(buf_in, key_id)
+  end
+
+  def decrypt_buffer (buf_in)
+    # Decrypts buf_in using key_id.  It will create the key if it has to.
+    @kzcrypt.decrypt_buffer(buf_in)
+  end
 end
 
