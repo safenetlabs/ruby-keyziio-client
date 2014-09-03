@@ -2,26 +2,24 @@
 require 'base64'
 require 'openssl'
 require 'stringio'
-require_relative 'kzrestclient.rb'
+#require_relative 'kzrestclient.rb'
 require_relative 'kzheader.rb'
 
 class InvalidKeyException < Exception
-  # Cannot unwrap this key
-  def to_s
-      return 'Cannot unwrap this key'
-  end
+
 end
 
 class KZCrypt
   # File crypto operations for Keyziio
-
-  def initialize
+  def initialize(rest_client)
     @chunk_length = 1024
-    @rest_client = KZRestClient.new
+    @rest_client = rest_client #KZRestClient.new
     @cipher_algo = 'AES-256-CBC'
     @cipher_block_size = 16
     @header = KZHeader.new
     @mac = nil
+    @user_cipher = nil
+    @user_key = nil
   end
 
   def _process_file (file_in, file_out, encrypt, key_id=nil)
@@ -150,23 +148,9 @@ class KZCrypt
   end
 
   def _init_cipher (key_id, new_key)
-    if new_key
-      key_json = @rest_client.get_new_key(key_id, @user_id)
-    else
-      key_json = @rest_client.get_key(key_id, @user_id)
-    end
-    # Key is encrypted under the user key, we have to decrypt it
-    wrapped_key = Base64.decode64(JSON.parse(key_json)['key'])
-    begin
-      raw_key = @user_private_key.private_decrypt(wrapped_key, OpenSSL::PKey::RSA::PKCS1_PADDING)
-    rescue OpenSSL::PKey::RSAError
-      raise InvalidKeyException
-    end
-
-    @mac = _make_mac (raw_key)
-
-    iv = Base64.decode64(JSON.parse(key_json)['iv'])
-    cipher = OpenSSL::Cipher.new(@cipher_algo)
+    key, iv, type = new_key ? create_and_post_data_key(key_id) : get_data_key(key_id)
+    @mac = _make_mac (key)
+    cipher = OpenSSL::Cipher.new(type)
     encrypt = new_key
     if encrypt
       cipher.encrypt
@@ -174,7 +158,7 @@ class KZCrypt
       cipher.decrypt
     end
     cipher.iv = iv
-    cipher.key = raw_key
+    cipher.key = key
     # We take care of padding
     cipher.padding = 0
     return cipher
@@ -186,11 +170,78 @@ class KZCrypt
     return OpenSSL::HMAC.hexdigest(digest, raw_key, @header.magic_number)
   end
 
-  def inject_user_key (user_private_key_pem, user_id)
-    # Injects the users private key and id so that they can unwrap keyziio data keys
-    # The private key is expected to be in PEM format
-    @user_private_key = OpenSSL::PKey::RSA.new user_private_key_pem
-    @user_id = user_id
+  def unwrap_key (wrapped_user_key, private_key)
+    # Decrypt wrapped_user_key with the given private key
+    begin
+      private_key.private_decrypt(wrapped_user_key, OpenSSL::PKey::RSA::PKCS1_PADDING)
+    rescue OpenSSL::PKey::RSAError
+      raise InvalidKeyException
+    end
+  end
+
+  def create_and_post_data_key (key_id)
+    cipher = OpenSSL::Cipher.new(@cipher_algo)
+    key = cipher.random_key
+    iv = cipher.random_iv
+
+    wrapped_data_key = wrap_data_key(key, iv)
+    @rest_client.post_data_key(key_id, @cipher_algo, Base64.encode64(wrapped_data_key), Base64.encode64(iv))
+    return key, iv, @cipher_algo
+  end
+
+  def wrap_data_key (key, iv)
+    # encrypt data key with the user key
+    user_cipher = OpenSSL::Cipher.new(@cipher_algo)
+    user_cipher.encrypt
+    user_cipher.key = @user_key
+    user_cipher.iv = iv
+    # no padding
+    user_cipher.padding = 0
+
+    wrapped_data_key = user_cipher.update(key)
+    wrapped_data_key << user_cipher.final
+  end
+
+  def get_data_key (key_id)
+    response = @rest_client.get_key(key_id)
+    # Key is encrypted under the user key, we have to decrypt it
+    iv = Base64.decode64(JSON.parse(response)['iv'])
+    wrapped_key = Base64.decode64(JSON.parse(response)['key'])
+    raw_key = unwrap_data_key(wrapped_key, iv)
+    raise InvalidKeyException if(raw_key.nil? or key.size != 32)
+    type = JSON.parse(response)['type']
+
+    return key, iv, type
+  end
+
+  def unwrap_data_key (wrapped_data_key, iv)
+    # decrypt data key with the user key
+    user_cipher = OpenSSL::Cipher.new(@cipher_algo)
+    user_cipher.decrypt
+    user_cipher.key = @user_key
+    user_cipher.iv = iv
+    # no padding
+    user_cipher.padding = 0
+
+    data_key = user_cipher.update(wrapped_data_key)
+    data_key << user_cipher.final
+  end
+
+  def create_key_pair (size)
+    # Create an ephemeral key pair for establishing session and acquiring user key
+    OpenSSL::PKey::RSA.new size
+  end
+
+  def inject_user_key (user_key_pt1, user_key_pt2)
+    # XOR given key parts to contruct a key
+    @user_key = ''.force_encoding 'BINARY'
+    # using zip method to combine the strings as byte arrays and then xor elements of
+    # the two arrays
+    user_key_pt1.each_byte.zip(user_key_pt2.each_byte) {|a,b| @user_key<<(a^b)}
+
+    # # Do the same for iv as well
+    # @iv = ''.force_encoding 'BINARY'
+    # iv_pt1.each_byte.zip(iv_pt2.each_byte) {|a,b| @iv<<(a^b)}
   end
 
   def encrypt_file (file_in, file_out, key_id)
@@ -212,5 +263,4 @@ class KZCrypt
     # Decrypts buf_in using key_id.  It will create the key if it has to.
     _process_buffer(buf_in, false)
   end
-
 end
