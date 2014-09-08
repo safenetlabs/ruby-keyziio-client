@@ -11,7 +11,7 @@ end
 
 class KZCrypt
   # File crypto operations for Keyziio
-  def initialize(rest_client)
+  def initialize(rest_client, user_key)
     @chunk_length = 1024
     @rest_client = rest_client #KZRestClient.new
     @cipher_algo = 'AES-256-CBC'
@@ -19,19 +19,20 @@ class KZCrypt
     @header = KZHeader.new
     @mac = nil
     @user_cipher = nil
-    @user_key = nil
+    @user_key = user_key
   end
 
-  def _process_file (file_in, file_out, encrypt, key_id=nil)
+  def _process_file (file_in, file_out, encrypt, key_name=nil)
+    key_id = nil
     if not encrypt
       # get the key id from the file itself
       header_length = @header.decode_header(file_in, true)
       key_id = @header.key_id
     end
 
-    # Setup decrypt key and mac
+    # Setup encrypt/decrypt key and mac
     new_key = encrypt
-    cipher = _init_cipher(key_id, new_key)
+    cipher, key_id = _init_cipher(key_name, key_id, new_key)
 
     plain_text_length = File.stat(file_in).size
     File.open(file_in, 'rb') do |f_in|
@@ -64,7 +65,8 @@ class KZCrypt
     end
   end
 
-  def _process_buffer (obj_in, encrypt, key_id=nil)
+  def _process_buffer (obj_in, encrypt, key_name=nil)
+    key_id = nil
     if not encrypt
       # get the key id from the file itself
       header_length = @header.decode_header(obj_in, false)
@@ -73,7 +75,7 @@ class KZCrypt
 
     # Setup decrypt key and mac
     new_key = encrypt
-    cipher = _init_cipher(key_id, new_key)
+    cipher, key_id = _init_cipher(key_name, key_id, new_key)
 
     obj_out = ''
     #plain_text_length = encrypt ? obj_in.bytesize : obj_in[0].bytesize
@@ -147,8 +149,8 @@ class KZCrypt
     return !is_last_chunk ? data_out : data_out[0..-(data_out[-1]).ord]
   end
 
-  def _init_cipher (key_id, new_key)
-    key, iv, type = new_key ? create_and_post_data_key(key_id) : get_data_key(key_id)
+  def _init_cipher (key_name, key_id, new_key)
+    key, iv, type, id = new_key ? create_and_post_data_key(key_name) : get_data_key(key_id)
     @mac = _make_mac (key)
     cipher = OpenSSL::Cipher.new(type)
     encrypt = new_key
@@ -161,7 +163,7 @@ class KZCrypt
     cipher.key = key
     # We take care of padding
     cipher.padding = 0
-    return cipher
+    return cipher, id
   end
 
   def _make_mac (raw_key)
@@ -179,14 +181,26 @@ class KZCrypt
     end
   end
 
-  def create_and_post_data_key (key_id)
+  def create_and_post_data_key (key_name)
     cipher = OpenSSL::Cipher.new(@cipher_algo)
     key = cipher.random_key
     iv = cipher.random_iv
 
     wrapped_data_key = wrap_data_key(key, iv)
-    @rest_client.post_data_key(key_id, @cipher_algo, Base64.encode64(wrapped_data_key), Base64.encode64(iv))
-    return key, iv, @cipher_algo
+    response = @rest_client.post_data_key(key_name, @cipher_algo, Base64.encode64(wrapped_data_key), Base64.encode64(iv))
+    return key, iv, @cipher_algo, JSON.parse(response)['id']
+  end
+
+  def get_data_key (key_id)
+    response = @rest_client.get_key(key_id)
+    # Key is encrypted under the user key, we have to decrypt it
+    iv = Base64.decode64(JSON.parse(response)['iv'])
+    wrapped_key = Base64.decode64(JSON.parse(response)['key'])
+    raw_key = unwrap_data_key(wrapped_key, iv)
+    raise InvalidKeyException if(raw_key.nil? or raw_key.size != 32)
+    type = JSON.parse(response)['type']
+
+    return raw_key, iv, type, key_id
   end
 
   def wrap_data_key (key, iv)
@@ -200,18 +214,6 @@ class KZCrypt
 
     wrapped_data_key = user_cipher.update(key)
     wrapped_data_key << user_cipher.final
-  end
-
-  def get_data_key (key_id)
-    response = @rest_client.get_key(key_id)
-    # Key is encrypted under the user key, we have to decrypt it
-    iv = Base64.decode64(JSON.parse(response)['iv'])
-    wrapped_key = Base64.decode64(JSON.parse(response)['key'])
-    raw_key = unwrap_data_key(wrapped_key, iv)
-    raise InvalidKeyException if(raw_key.nil? or key.size != 32)
-    type = JSON.parse(response)['type']
-
-    return key, iv, type
   end
 
   def unwrap_data_key (wrapped_data_key, iv)
@@ -232,21 +234,22 @@ class KZCrypt
     OpenSSL::PKey::RSA.new size
   end
 
-  def inject_user_key (user_key_pt1, user_key_pt2)
+  def construct_user_key (user_key_pt1, user_key_pt2)
     # XOR given key parts to contruct a key
     @user_key = ''.force_encoding 'BINARY'
     # using zip method to combine the strings as byte arrays and then xor elements of
     # the two arrays
     user_key_pt1.each_byte.zip(user_key_pt2.each_byte) {|a,b| @user_key<<(a^b)}
+    return Base64.encode64(@user_key)
 
     # # Do the same for iv as well
     # @iv = ''.force_encoding 'BINARY'
     # iv_pt1.each_byte.zip(iv_pt2.each_byte) {|a,b| @iv<<(a^b)}
   end
 
-  def encrypt_file (file_in, file_out, key_id)
-    # Encrypts file_in using key_id.  It will create the key if it has to.
-    _process_file(file_in, file_out, true, key_id)
+  def encrypt_file (file_in, file_out, key_name)
+    # Encrypts file_in using key_name.  It will create the key if it has to.
+    _process_file(file_in, file_out, true, key_name)
   end
 
   def decrypt_file (file_in, file_out)
@@ -254,9 +257,9 @@ class KZCrypt
     _process_file(file_in, file_out, false)
   end
 
-  def encrypt_buffer (buf_in, key_id)
-    # Encrypts buf_in using key_id.  It will create the key if it has to.
-    _process_buffer(buf_in, true, key_id)
+  def encrypt_buffer (buf_in, key_name)
+    # Encrypts buf_in using key_name.  It will create the key if it has to.
+    _process_buffer(buf_in, true, key_name)
   end
 
   def decrypt_buffer (buf_in)
