@@ -27,7 +27,7 @@ class KZRestClient < Object
       return '%s/%s' % [@base_url, path]
     end
 
-    def get_user_key (pub_key_pem)
+    def get_keychain_key (pub_key_pem)
       begin
         RestClient.post _url(@api_path + @keychain_id.to_s + '/wrap'), {'public_key' => pub_key_pem},
                                               {:content_type => :json,

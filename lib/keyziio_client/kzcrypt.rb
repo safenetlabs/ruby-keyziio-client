@@ -10,8 +10,9 @@ class InvalidKeyException < Exception
 end
 
 class KZCrypt
+  attr_accessor :keychain_key
   # File crypto operations for Keyziio
-  def initialize(rest_client, user_key)
+  def initialize(rest_client, keychain_key)
     @chunk_length = 1024
     @rest_client = rest_client #KZRestClient.new
     @cipher_algo = 'AES-256-CBC'
@@ -19,7 +20,7 @@ class KZCrypt
     @header = KZHeader.new
     @mac = nil
     @user_cipher = nil
-    @user_key = user_key
+    @keychain_key = keychain_key
   end
 
   def _process_file (file_in, file_out, encrypt, key_name=nil)
@@ -146,7 +147,7 @@ class KZCrypt
     if is_last_chunk
       data_out << cipher.final
     end
-    return !is_last_chunk ? data_out : data_out[0..-(data_out[-1]).ord]
+    return !is_last_chunk ? data_out : data_out[0..-((data_out[-1]).ord + 1)]
   end
 
   def _init_cipher (key_name, key_id, new_key)
@@ -172,10 +173,10 @@ class KZCrypt
     return OpenSSL::HMAC.hexdigest(digest, raw_key, @header.magic_number)
   end
 
-  def unwrap_key (wrapped_user_key, private_key)
-    # Decrypt wrapped_user_key with the given private key
+  def unwrap_key (wrapped_keychain_key, private_key)
+    # Decrypt wrapped_keychain_key with the given private key
     begin
-      private_key.private_decrypt(wrapped_user_key, OpenSSL::PKey::RSA::PKCS1_PADDING)
+      private_key.private_decrypt(wrapped_keychain_key, OpenSSL::PKey::RSA::PKCS1_PADDING)
     rescue OpenSSL::PKey::RSAError
       raise InvalidKeyException
     end
@@ -207,7 +208,7 @@ class KZCrypt
     # encrypt data key with the user key
     user_cipher = OpenSSL::Cipher.new(@cipher_algo)
     user_cipher.encrypt
-    user_cipher.key = @user_key
+    user_cipher.key = @keychain_key
     user_cipher.iv = iv
     # no padding
     user_cipher.padding = 0
@@ -220,7 +221,7 @@ class KZCrypt
     # decrypt data key with the user key
     user_cipher = OpenSSL::Cipher.new(@cipher_algo)
     user_cipher.decrypt
-    user_cipher.key = @user_key
+    user_cipher.key = @keychain_key
     user_cipher.iv = iv
     # no padding
     user_cipher.padding = 0
@@ -234,13 +235,13 @@ class KZCrypt
     OpenSSL::PKey::RSA.new size
   end
 
-  def construct_user_key (user_key_pt1, user_key_pt2)
+  def construct_keychain_key (keychain_key_pt1, keychain_key_pt2)
     # XOR given key parts to contruct a key
-    @user_key = ''.force_encoding 'BINARY'
+    @keychain_key = ''.force_encoding 'BINARY'
     # using zip method to combine the strings as byte arrays and then xor elements of
     # the two arrays
-    user_key_pt1.each_byte.zip(user_key_pt2.each_byte) {|a,b| @user_key<<(a^b)}
-    return Base64.encode64(@user_key)
+    keychain_key_pt1.each_byte.zip(keychain_key_pt2.each_byte) {|a,b| @keychain_key<<(a^b)}
+    return Base64.encode64(@keychain_key)
 
     # # Do the same for iv as well
     # @iv = ''.force_encoding 'BINARY'
